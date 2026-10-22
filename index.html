@@ -201,26 +201,46 @@ function saveResult(r){
   words.unshift({id:uid(),word:r.word||"",pos:r.pos||"",phonetic:r.phonetic||"",en:r.en||"",zh:r.zh||"",jp:r.jp||"",root:r.root||"",forms:r.forms||"",example:r.example||"",tags:[],createdAt:Date.now(),nextReview:0,interval:0,ease:2.5,reps:0,reviewDates:[]});
   persist();toast("已收藏到词库");
 }
-function lookupEnglish(query, append=false){
-  if(!append){$("searchResults").innerHTML='<div class="card empty">正在查词…</div>';}
+async function lookupEnglish(query, append=false){
+  if(!append) $("searchResults").innerHTML='<div class="card empty">正在查询英文释义…</div>';
   const results=[];
-  const api1=fetch("https://api.dictionaryapi.dev/api/v2/entries/en/"+encodeURIComponent(query)).then(r=>{if(!r.ok)throw Error("no english");return r.json()}).then(data=>{
+  const starter={
+    "in":{pos:"preposition / adverb",en:"Inside or within a place, area, or period; expressing inclusion, location, or time.",zh:"在……里面；在……期间；处于……之中",jp:"～の中に、～の内に、～の間に"},
+    "run":{pos:"verb / noun",en:"To move swiftly on foot; to operate or manage; an act of running.",zh:"跑；运行；经营；一次跑步",jp:"走る（はしる）；運営する（うんえいする）"},
+    "study":{pos:"verb / noun",en:"To learn about a subject by reading, practicing, or investigation.",zh:"学习；研究",jp:"勉強する（べんきょうする）；研究する"},
+    "resilient":{pos:"adjective",en:"Able to recover quickly after difficulty or change.",zh:"有韧性的；能迅速恢复的",jp:"回復力のある；立ち直りが早い"},
+    "predict":{pos:"verb",en:"To say what will happen in the future based on information.",zh:"预测；预言",jp:"予測する（よそくする）"},
+    "beautiful":{pos:"adjective",en:"Pleasing the senses or mind aesthetically.",zh:"美丽的；漂亮的",jp:"美しい（うつくしい）"},
+    "apple":{pos:"noun",en:"A round fruit with red, green, or yellow skin.",zh:"苹果",jp:"りんご"}
+  };
+  const key=query.trim().toLowerCase();
+  if(starter[key]) results.push({word:key,...starter[key],source:"内置基础词条"});
+  let apiError="";
+  try{
+    const url="https://api.dictionaryapi.dev/api/v2/entries/en/"+encodeURIComponent(query);
+    let response;
+    try{response=await fetch(url);}catch(e){response=await fetch("https://api.allorigins.win/raw?url="+encodeURIComponent(url));}
+    if(!response.ok)throw Error("HTTP "+response.status);
+    const data=await response.json();
     data.forEach(entry=>{
       const phonetic=entry.phonetic||(entry.phonetics||[]).find(p=>p.text)?.text||"";
-      (entry.meanings||[]).forEach(m=>{
-        const defs=(m.definitions||[]).slice(0,3);
-        defs.forEach((d)=>results.push({word:entry.word||query,pos:m.partOfSpeech||"",phonetic,en:d.definition||"",example:d.example||"",source:"Free Dictionary"}));
-      });
+      (entry.meanings||[]).forEach(m=>(m.definitions||[]).slice(0,3).forEach(d=>results.push({word:entry.word||query,pos:m.partOfSpeech||"",phonetic,en:d.definition||"",example:d.example||"",source:"Free Dictionary"})));
     });
-  }).catch(()=>{});
-  const api2=fetch("https://api.datamuse.com/words?sp="+encodeURIComponent(query)+"&md=f&max=8").then(r=>r.json()).then(data=>{
-    if(data.length&&results.length===0)data.slice(0,4).forEach(x=>results.push({word:x.word,forms:x.tags?.includes("v")?"可能是动词形式，请核对原形":"相关词形/拼写建议",source:"Datamuse"}));
-  }).catch(()=>{});
-  Promise.all([api1,api2]).then(()=>{
-    const unique=[];const seen=new Set();for(const r of results){const k=(r.word+"|"+r.pos+"|"+r.en).toLowerCase();if(!seen.has(k)){seen.add(k);unique.push(r);}}
+  }catch(e){apiError=String(e?.message||e);}
+  let suggestions=[];
+  try{const r=await fetch("https://api.datamuse.com/words?sp="+encodeURIComponent(query)+"&md=f&max=8");if(r.ok)suggestions=await r.json();}catch(e){}
+  const unique=[],seen=new Set();
+  for(const r of results){const k=(r.word+"|"+r.pos+"|"+r.en).toLowerCase();if(!seen.has(k)){seen.add(k);unique.push(r);}}
+  if(unique.length){
     renderSearchResults(unique.slice(0,12),query);
-    if(!unique.length)toast("没找到英文释义，可以手动添加或搜索日文");
-  });
+    if(apiError&&!starter[key])toast("在线词典连接失败，当前显示的结果可能不完整");
+  }else{
+    const tags=suggestions.slice(0,5).map(x=>`<span class="tag">${escapeHTML(x.word)}</span>`).join(" ");
+    $("searchResults").innerHTML=`<div class="card"><div class="word">${escapeHTML(query)}</div><p class="meaning">在线词典暂时没有返回释义。以下仅为拼写建议，不是单词释义。</p><div>${tags}</div><div class="actions"><button class="btn green" id="openEnDict">打开英文词典 ↗</button><button class="btn" id="openJishoFromEn">打开 Jisho ↗</button><button class="btn" id="manualFromEn">手动保存这个词</button></div><p class="small">连接信息：${escapeHTML(apiError||"词典没有返回释义")}</p></div>`;
+    $("openEnDict").onclick=()=>window.open("https://en.wiktionary.org/wiki/"+encodeURIComponent(query),"_blank","noopener");
+    $("openJishoFromEn").onclick=()=>window.open("https://jisho.org/search/"+encodeURIComponent(query),"_blank","noopener");
+    $("manualFromEn").onclick=()=>{go("add");$("fWord").value=query;};
+  }
 }
 async function lookupJapanese(query){
   $("searchResults").innerHTML='<div class="card empty">正在查询日文词条…</div>';
